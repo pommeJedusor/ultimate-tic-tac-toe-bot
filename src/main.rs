@@ -3,7 +3,7 @@
 // TODO add a left border to the bitmap to make get_moves a little bit faster
 
 const FULL_BOARD: u16 = 0b111111111;
-const MAX_DEPTH: usize = 5;
+const MAX_DEPTH: usize = 8;
 const IS_BOARD_WINNING: [bool; 512] = are_boards_winning();
 const SCORE_BY_UNAVAILABLE_SQUARES_BITMAP: [u8; 512] = scores_by_unavailable_squares_bitmap();
 const SCORE_BY_SQUARE: [i32; 9] = [3, 2, 3, 2, 4, 2, 3, 2, 3];
@@ -193,7 +193,13 @@ impl Board {
         opponent_player_score - current_player_score
     }
 
-    fn minimax(&mut self, moves_by_depth: &mut [MoveStruct; MAX_DEPTH], depth: usize) -> (u8, i32) {
+    fn minimax(
+        &mut self,
+        moves_by_depth: &mut [MoveStruct; MAX_DEPTH],
+        depth: usize,
+        mut alpha: i32,
+        beta: i32,
+    ) -> (u8, i32) {
         self.get_moves(&mut moves_by_depth[depth]);
         if moves_by_depth[depth].index == 0 {
             return (0, 0);
@@ -210,10 +216,14 @@ impl Board {
                 let score = self.eval();
                 moves_by_depth[depth].moves[i as usize].1 = score;
             } else {
-                let (_, best_score) = self.minimax(moves_by_depth, depth + 1);
+                let (_, best_score) = self.minimax(moves_by_depth, depth + 1, -beta, -alpha);
                 moves_by_depth[depth].moves[i as usize].1 = -best_score;
             }
             self.cancel_move(r#move, previous_mini_board_can_play);
+            alpha = alpha.max(moves_by_depth[depth].moves[i as usize].1);
+            if alpha > beta {
+                break;
+            }
         }
         let best_move_index = (0..moves_by_depth[depth].index)
             .max_by_key(|i| moves_by_depth[depth].moves[*i as usize].1)
