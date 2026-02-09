@@ -3,7 +3,57 @@
 // TODO add a left border to the bitmap to make get_moves a little bit faster
 
 const FULL_BOARD: u16 = 0b111111111;
-const MAX_DEPTH: usize = 2;
+const MAX_DEPTH: usize = 5;
+const IS_BOARD_WINNING: [bool; 512] = are_boards_winning();
+const SCORE_BY_UNAVAILABLE_SQUARES_BITMAP: [u8; 512] = scores_by_unavailable_squares_bitmap();
+const SCORE_BY_SQUARE: [i32; 9] = [3, 2, 3, 2, 4, 2, 3, 2, 3];
+
+const fn are_boards_winning() -> [bool; 512] {
+    let mut results = [false; 512];
+    let mut board = 0;
+    while board < 512 {
+        let is_board_winning = (board & board >> 1 & board >> 2) & 0b1001001 != 0
+            || (board & board >> 3 & board >> 6) != 0
+            || board & 0b100010001 == 0b100010001
+            || board & 0b1010100 == 0b1010100;
+        results[board] = is_board_winning;
+        board += 1;
+    }
+    results
+}
+
+const fn scores_by_unavailable_squares_bitmap() -> [u8; 512] {
+    let mut results = [0; 512];
+    let mut board = 0;
+    while board < 512 {
+        if board & 0b111 == 0 {
+            results[board] += 1;
+        }
+        if board & 0b111000 == 0 {
+            results[board] += 1;
+        }
+        if board & 0b111000000 == 0 {
+            results[board] += 1;
+        }
+        if board & 0b1001001 == 0 {
+            results[board] += 1;
+        }
+        if board & 0b10010010 == 0 {
+            results[board] += 1;
+        }
+        if board & 0b100100100 == 0 {
+            results[board] += 1;
+        }
+        if board & 0b1010100 == 0 {
+            results[board] += 1;
+        }
+        if board & 0b100010001 == 0 {
+            results[board] += 1;
+        }
+        board += 1;
+    }
+    results
+}
 
 #[derive(Debug, Copy, Clone)]
 struct MoveStruct {
@@ -72,22 +122,13 @@ impl Board {
     }
 
     fn is_mini_board_winning(&self, board_index: usize) -> bool {
-        // TODO precompute all possible games
         let board = self.players_mini_boards[self.player_turn][board_index];
-        // horizontal then vertical then daigonal
-        (board & board >> 1 & board >> 2) & 0b1001001 != 0
-            || (board & board >> 3 & board >> 6) != 0
-            || board & 0b100010001 == 0b100010001
-            || board & 0b1010100 == 0b1010100
+        IS_BOARD_WINNING[board as usize]
     }
 
     fn is_losing(&self) -> bool {
-        // TODO precompute all possible games
         let board = self.players_big_board[self.player_turn ^ 1];
-        (board & board >> 1 & board >> 2) & 0b1001001 != 0
-            || (board & board >> 3 & board >> 6) != 0
-            || board & 0b100010001 == 0b100010001
-            || board & 0b1010100 == 0b1010100
+        IS_BOARD_WINNING[board as usize]
     }
 
     fn play_move(&mut self, r#move: u8) {
@@ -128,9 +169,27 @@ impl Board {
     }
 
     fn eval(&self) -> i32 {
-        let current_player_score = self.players_big_board[self.player_turn].count_ones() as i32;
-        let opponent_player_score =
-            self.players_big_board[self.player_turn ^ 1].count_ones() as i32;
+        let mut current_player_score = SCORE_BY_UNAVAILABLE_SQUARES_BITMAP
+            [(self.finished_played_boards ^ self.players_big_board[self.player_turn]) as usize]
+            as i32
+            * 1000;
+        let mut opponent_player_score = SCORE_BY_UNAVAILABLE_SQUARES_BITMAP
+            [(self.finished_played_boards ^ self.players_big_board[self.player_turn ^ 1]) as usize]
+            as i32
+            * 1000;
+        for i in 0..9 {
+            if 1 << i & self.finished_played_boards != 0 {
+                continue;
+            }
+            current_player_score += SCORE_BY_UNAVAILABLE_SQUARES_BITMAP
+                [self.players_mini_boards[self.player_turn ^ 1][i] as usize]
+                as i32
+                * SCORE_BY_SQUARE[i];
+            opponent_player_score += SCORE_BY_UNAVAILABLE_SQUARES_BITMAP
+                [self.players_mini_boards[self.player_turn][i] as usize]
+                as i32
+                * SCORE_BY_SQUARE[i];
+        }
         opponent_player_score - current_player_score
     }
 
@@ -145,7 +204,7 @@ impl Board {
 
             self.play_move(r#move);
             if self.is_losing() {
-                let score = (MAX_DEPTH - depth) as i32 * 100;
+                let score = (MAX_DEPTH - depth) as i32 * 10_000;
                 moves_by_depth[depth].moves[i as usize].1 = score;
             } else if depth + 1 == MAX_DEPTH {
                 let score = self.eval();
