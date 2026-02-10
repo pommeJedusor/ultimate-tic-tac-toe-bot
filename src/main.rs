@@ -1,8 +1,6 @@
 const FULL_BOARD: u16 = 0b111111111;
-const MAX_DEPTH: usize = 50;
-const MAX_COST: u64 = 10_000_000;
+const MAX_DEPTH: usize = 7;
 const IS_BOARD_WINNING: [bool; 512] = are_boards_winning();
-const SCORE_BY_UNAVAILABLE_SQUARES_BITMAP: [u8; 512] = scores_by_unavailable_squares_bitmap();
 const SCORE_BY_SQUARE: [i32; 9] = [3, 2, 3, 2, 4, 2, 3, 2, 3];
 
 const fn are_boards_winning() -> [bool; 512] {
@@ -53,39 +51,6 @@ fn scores_by_position() -> [i32; 262144] {
         position += 1;
     }
     scores
-}
-
-const fn scores_by_unavailable_squares_bitmap() -> [u8; 512] {
-    let mut results = [0; 512];
-    let mut board = 0;
-    while board < 512 {
-        if board & 0b111 == 0 {
-            results[board] += 1;
-        }
-        if board & 0b111000 == 0 {
-            results[board] += 1;
-        }
-        if board & 0b111000000 == 0 {
-            results[board] += 1;
-        }
-        if board & 0b1001001 == 0 {
-            results[board] += 1;
-        }
-        if board & 0b10010010 == 0 {
-            results[board] += 1;
-        }
-        if board & 0b100100100 == 0 {
-            results[board] += 1;
-        }
-        if board & 0b1010100 == 0 {
-            results[board] += 1;
-        }
-        if board & 0b100010001 == 0 {
-            results[board] += 1;
-        }
-        board += 1;
-    }
-    results
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -218,15 +183,23 @@ impl Board {
         moves_by_depth: &mut [MoveStruct; MAX_DEPTH],
         scores_by_position: &[i32; 262144],
         depth: usize,
-        mut cost: u64,
         mut alpha: i32,
         beta: i32,
     ) -> (u8, i32) {
         self.get_moves(&mut moves_by_depth[depth]);
         if moves_by_depth[depth].index == 0 {
-            return (0, 0);
+            let squares_controlled_by_player =
+                self.players_big_board[self.player_turn].count_ones();
+            let squares_controlled_by_opponent =
+                self.players_big_board[self.player_turn ^ 1].count_ones();
+            if squares_controlled_by_player == squares_controlled_by_opponent {
+                return (0, 0);
+            }
+            if squares_controlled_by_player < squares_controlled_by_opponent {
+                return (0, (MAX_DEPTH - depth) as i32 * 1_000_000);
+            }
+            return (0, (MAX_DEPTH - depth) as i32 * -1_000_000);
         }
-        cost *= moves_by_depth[depth].index as u64;
 
         for i in 0..moves_by_depth[depth].index {
             let (r#move, _) = moves_by_depth[depth].moves[i as usize];
@@ -236,18 +209,12 @@ impl Board {
             if self.is_losing() {
                 let score = (MAX_DEPTH - depth) as i32 * 1_000_000;
                 moves_by_depth[depth].moves[i as usize].1 = score;
-            } else if depth + 1 == MAX_DEPTH || cost > MAX_COST {
+            } else if depth + 1 == MAX_DEPTH {
                 let score = -self.eval(scores_by_position);
                 moves_by_depth[depth].moves[i as usize].1 = score;
             } else {
-                let (_, best_score) = self.minimax(
-                    moves_by_depth,
-                    scores_by_position,
-                    depth + 1,
-                    cost,
-                    -beta,
-                    -alpha,
-                );
+                let (_, best_score) =
+                    self.minimax(moves_by_depth, scores_by_position, depth + 1, -beta, -alpha);
                 moves_by_depth[depth].moves[i as usize].1 = -best_score;
             }
             self.cancel_move(r#move, previous_mini_board_can_play);
