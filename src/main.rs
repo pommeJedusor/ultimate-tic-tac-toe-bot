@@ -1,7 +1,3 @@
-// TODO precompute all possible games to see if they're possible to win for either players and
-// store that in Board
-// TODO add a left border to the bitmap to make get_moves a little bit faster
-
 const FULL_BOARD: u16 = 0b111111111;
 const MAX_DEPTH: usize = 50;
 const MAX_COST: u64 = 10_000_000;
@@ -21,6 +17,42 @@ const fn are_boards_winning() -> [bool; 512] {
         board += 1;
     }
     results
+}
+
+// max score = 128, min score = -128
+fn scores_by_position() -> [i32; 262144] {
+    let score_by_number_of_square_controlled = [0, 1, 4, 16];
+    let masks = [
+        0b111,
+        0b111000,
+        0b111000000,
+        0b1001001,
+        0b10010010,
+        0b100100100,
+        0b100010001,
+        0b1010100,
+    ];
+    let mut scores: [i32; 262144] = [0; 262144];
+    let mut position = 0;
+    while position < 262144 {
+        let player: usize = position >> 9;
+        let opponent: usize = position & 0b111111111;
+        let mut i = 0;
+        while i < masks.len() {
+            let mask = masks[i];
+            if opponent & mask == 0 {
+                scores[position] +=
+                    score_by_number_of_square_controlled[(player & mask).count_ones() as usize];
+            }
+            if player & mask == 0 {
+                scores[position] -=
+                    score_by_number_of_square_controlled[(opponent & mask).count_ones() as usize];
+            }
+            i += 1;
+        }
+        position += 1;
+    }
+    scores
 }
 
 const fn scores_by_unavailable_squares_bitmap() -> [u8; 512] {
@@ -169,34 +201,22 @@ impl Board {
         self.mini_board_can_play = mini_board_can_play;
     }
 
-    fn eval(&self) -> i32 {
-        let mut current_player_score = SCORE_BY_UNAVAILABLE_SQUARES_BITMAP
-            [(self.finished_played_boards ^ self.players_big_board[self.player_turn]) as usize]
-            as i32
-            * 1000;
-        let mut opponent_player_score = SCORE_BY_UNAVAILABLE_SQUARES_BITMAP
-            [(self.finished_played_boards ^ self.players_big_board[self.player_turn ^ 1]) as usize]
-            as i32
-            * 1000;
-        for i in 0..9 {
-            if 1 << i & self.finished_played_boards != 0 {
-                continue;
-            }
-            current_player_score += SCORE_BY_UNAVAILABLE_SQUARES_BITMAP
-                [self.players_mini_boards[self.player_turn ^ 1][i] as usize]
-                as i32
-                * SCORE_BY_SQUARE[i];
-            opponent_player_score += SCORE_BY_UNAVAILABLE_SQUARES_BITMAP
-                [self.players_mini_boards[self.player_turn][i] as usize]
-                as i32
-                * SCORE_BY_SQUARE[i];
+    fn eval(&self, scores_by_position: &[i32; 262144]) -> i32 {
+        let position = (self.players_big_board[self.player_turn] as usize) << 9
+            | (self.players_big_board[self.player_turn ^ 1] as usize);
+        let mut score = scores_by_position[position] * 1000;
+        for i in (0..9).filter(|i| 1 << i & self.finished_played_boards == 0) {
+            let position = (self.players_mini_boards[self.player_turn][i] as usize) << 9
+                | (self.players_mini_boards[self.player_turn ^ 1][i] as usize);
+            score += scores_by_position[position] * SCORE_BY_SQUARE[i];
         }
-        opponent_player_score - current_player_score
+        score
     }
 
     fn minimax(
         &mut self,
         moves_by_depth: &mut [MoveStruct; MAX_DEPTH],
+        scores_by_position: &[i32; 262144],
         depth: usize,
         mut cost: u64,
         mut alpha: i32,
@@ -214,13 +234,20 @@ impl Board {
 
             self.play_move(r#move);
             if self.is_losing() {
-                let score = (MAX_DEPTH - depth) as i32 * 10_000;
+                let score = (MAX_DEPTH - depth) as i32 * 1_000_000;
                 moves_by_depth[depth].moves[i as usize].1 = score;
             } else if depth + 1 == MAX_DEPTH || cost > MAX_COST {
-                let score = self.eval();
+                let score = -self.eval(scores_by_position);
                 moves_by_depth[depth].moves[i as usize].1 = score;
             } else {
-                let (_, best_score) = self.minimax(moves_by_depth, depth + 1, cost, -beta, -alpha);
+                let (_, best_score) = self.minimax(
+                    moves_by_depth,
+                    scores_by_position,
+                    depth + 1,
+                    cost,
+                    -beta,
+                    -alpha,
+                );
                 moves_by_depth[depth].moves[i as usize].1 = -best_score;
             }
             self.cancel_move(r#move, previous_mini_board_can_play);
@@ -262,4 +289,6 @@ fn main() {
     let move_index = 80;
     println!("{:?}", moves_by_depth[0]);
     println!("{:?}", moves_by_depth[0].moves[move_index]);
+    let scores_by_position: [i32; 262144] = scores_by_position();
+    println!("{}", scores_by_position[1]);
 }
